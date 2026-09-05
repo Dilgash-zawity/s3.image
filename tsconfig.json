@@ -7,7 +7,9 @@
 		"types": ["$app/types", "@types/bun", "@types/node"],
 		"paths": {
 			"#lib": ["./src/lib/index.ts"],
-			"#lib/*": ["./src/lib/*"]
+			"#lib/*": ["./src/lib/*"],
+			"#server": ["./src/server/index.ts"],
+			"#server/*": ["./src/server/*"]
 		}
 	},
 	"include": [

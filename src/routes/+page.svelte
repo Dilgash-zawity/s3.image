@@ -7,83 +7,94 @@
 		id: number;
 		name: string;
 		url: string;
-		downloadUrl: string;
+		thumbUrl?: string;
 		contentType: string;
 		size: number;
 		width: number | null;
 		height: number | null;
-		format: string | null;
 		createdAt: string;
 	};
 
 	const imagesQuery = GET_IMAGES();
 
+	let activeImage = $state<ImageRecord | null>(null);
+	let deleteError = $state<string | null>(null);
 	let dragOver = $state(false);
-	let selectedFile = $state<File | null>(null);
-	let previewDataUrl = $state<string | null>(null);
-	let customName = $state('');
-	let isUploading = $state(false);
-	let deletingId = $state<number | null>(null);
 	let errorMessage = $state<string | null>(null);
-	let successMessage = $state<string | null>(null);
-	let activeModalImage = $state<ImageRecord | null>(null);
+	let isDeleting = $state(false);
+	let isUploading = $state(false);
+	let previewDataUrl = $state<string | null>(null);
+	let selectedFile = $state<File | null>(null);
+	let showDeleteConfirmation = $state(false);
+	let showInfo = $state(false);
+	let showUpload = $state(false);
 
 	const images = $derived(imagesQuery.current ?? []);
 	const isLoading = $derived(imagesQuery.loading && !imagesQuery.current);
 
-	function formatBytes(bytes: number, decimals = 1) {
-		if (bytes === 0) return '0 Bytes';
+	function formatBytes(bytes: number): string {
+		if (bytes === 0) return '0 B';
 
-		const k = 1024;
-		const dm = decimals < 0 ? 0 : decimals;
-		const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
+		const units = ['B', 'KB', 'MB', 'GB'];
+		const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+		const value = bytes / Math.pow(1024, index);
 
-		return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+		return `${Number(value.toFixed(value >= 10 || index === 0 ? 0 : 1))} ${units[index]}`;
 	}
 
-	function formatDate(dateString: string) {
-		try {
-			return new Intl.DateTimeFormat(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit'
-			}).format(new Date(dateString));
-		} catch {
-			return dateString;
-		}
+	function formatDate(dateString: string): string {
+		const date = new Date(dateString);
+		return Number.isNaN(date.getTime()) ? dateString : date.toLocaleString();
 	}
 
-	function getErrorMessage(error: unknown, fallback: string) {
+	function getErrorMessage(error: unknown, fallback: string): string {
 		return error instanceof Error && error.message ? error.message : fallback;
 	}
 
-	function handleFileSelected(file: File) {
+	function clearSelection(): void {
+		selectedFile = null;
+		previewDataUrl = null;
+	}
+
+	function closeUpload(): void {
+		if (isUploading) return;
+
+		clearSelection();
+		dragOver = false;
+		showUpload = false;
+	}
+
+	function openUpload(): void {
+		errorMessage = null;
+		showUpload = true;
+	}
+
+	function handleFileSelected(file: File): void {
 		if (!file.type.startsWith('image/')) {
-			errorMessage = 'Only image files are allowed';
+			errorMessage = 'Choose an image file to upload.';
 			return;
 		}
 
 		errorMessage = null;
 		selectedFile = file;
-		customName = file.name;
 
 		const reader = new FileReader();
 		reader.onload = () => {
 			previewDataUrl = typeof reader.result === 'string' ? reader.result : null;
 		};
+		reader.onerror = () => {
+			previewDataUrl = null;
+			errorMessage = 'Unable to read the selected image.';
+		};
 		reader.readAsDataURL(file);
 	}
 
-	function onFileInputChange(event: Event) {
-		const target = event.target as HTMLInputElement;
-		const [file] = target.files ?? [];
-
+	function onFileInputChange(event: Event): void {
+		const [file] = (event.currentTarget as HTMLInputElement).files ?? [];
 		if (file) handleFileSelected(file);
 	}
 
-	function onDrop(event: DragEvent) {
+	function onDrop(event: DragEvent): void {
 		event.preventDefault();
 		dragOver = false;
 
@@ -91,28 +102,21 @@
 		if (file) handleFileSelected(file);
 	}
 
-	function clearSelection() {
-		selectedFile = null;
-		previewDataUrl = null;
-		customName = '';
-	}
-
-	async function handleUpload() {
+	async function handleUpload(): Promise<void> {
 		if (!selectedFile || !previewDataUrl) return;
 
 		isUploading = true;
 		errorMessage = null;
-		successMessage = null;
 
 		try {
 			await UPLOAD_IMAGE({
-				name: customName.trim() || selectedFile.name,
+				name: selectedFile.name,
 				mimeType: selectedFile.type,
 				data: previewDataUrl
 			}).updates(GET_IMAGES);
 
-			successMessage = `Successfully uploaded "${customName || selectedFile.name}"`;
-			clearSelection();
+			isUploading = false;
+			closeUpload();
 			await imagesQuery.refresh();
 		} catch (error: unknown) {
 			errorMessage = getErrorMessage(error, 'Upload failed. Please try again.');
@@ -121,361 +125,408 @@
 		}
 	}
 
-	async function handleDelete(id: number, name: string) {
-		if (!confirm(`Are you sure you want to delete "${name}"?`)) return;
+	function openLightbox(image: ImageRecord): void {
+		activeImage = image;
+		deleteError = null;
+		showDeleteConfirmation = false;
+		showInfo = false;
+	}
 
-		deletingId = id;
-		errorMessage = null;
+	function closeLightbox(): void {
+		if (isDeleting) return;
+
+		activeImage = null;
+		deleteError = null;
+		showDeleteConfirmation = false;
+		showInfo = false;
+	}
+
+	function openDeleteConfirmation(): void {
+		deleteError = null;
+		showDeleteConfirmation = true;
+	}
+
+	function closeDeleteConfirmation(): void {
+		if (isDeleting) return;
+
+		deleteError = null;
+		showDeleteConfirmation = false;
+	}
+
+	async function handleDelete(): Promise<void> {
+		if (!activeImage || isDeleting) return;
+
+		isDeleting = true;
+		deleteError = null;
 
 		try {
-			await DELETE_IMAGE({ id }).updates(GET_IMAGES);
-			successMessage = `Deleted "${name}"`;
-			if (activeModalImage?.id === id) activeModalImage = null;
+			await DELETE_IMAGE({ id: activeImage.id }).updates(GET_IMAGES);
+
+			activeImage = null;
+			showDeleteConfirmation = false;
+			showInfo = false;
 			await imagesQuery.refresh();
-		} catch (error: unknown) {
-			errorMessage = getErrorMessage(error, 'Failed to delete image');
+		} catch {
+			deleteError = 'Unable to delete this image. Please try again.';
 		} finally {
-			deletingId = null;
+			isDeleting = false;
 		}
 	}
 
-	function openModal(image: ImageRecord) {
-		activeModalImage = image;
+	function onLightboxBackdropClick(event: MouseEvent): void {
+		if (event.target === event.currentTarget && !showDeleteConfirmation) closeLightbox();
 	}
 
-	function closeModal() {
-		activeModalImage = null;
-	}
+	function onKeyDown(event: KeyboardEvent): void {
+		if (event.key !== 'Escape') return;
 
-	function onKeyDown(event: KeyboardEvent) {
-		if (event.key === 'Escape') closeModal();
+		if (showDeleteConfirmation) closeDeleteConfirmation();
+		else if (activeImage) closeLightbox();
+		else if (showUpload) closeUpload();
 	}
 </script>
 
 <svelte:window onkeydown={onKeyDown} />
 
-<main class="min-h-screen bg-background text-foreground">
-	<div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-		<header class="mb-8 flex flex-wrap items-center justify-between gap-4 border-b border-border pb-6">
-			<div class="flex items-center gap-3">
-				<div
-					class="flex size-11 items-center justify-center rounded-xl border border-border bg-card text-primary"
-					aria-hidden="true"
-				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="size-6">
-						<rect x="3" y="4" width="18" height="16" rx="2" />
-						<circle cx="8.5" cy="9" r="1.5" />
-						<path d="m21 15-5-5L5 20" />
-					</svg>
-				</div>
-				<div>
-					<h1 class="text-xl font-semibold tracking-tight sm:text-2xl">Image Storage Prototype</h1>
-					<p class="mt-1 max-w-2xl text-sm text-muted-foreground">
-						Powered by SvelteKit Remote Functions, Bun.s3, Bun.Image, PostgreSQL (Drizzle) and
-						Valibot
-					</p>
-				</div>
-			</div>
-			<div class="flex items-center gap-3">
-				<button
-					type="button"
-					class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium shadow-xs transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none disabled:opacity-50"
-					onclick={() => imagesQuery.refresh()}
-					title="Refresh image gallery"
-				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" aria-hidden="true">
-						<path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-					</svg>
-					Refresh
-				</button>
-				<span class="rounded-full bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">
-					{images.length} {images.length === 1 ? 'image' : 'images'}
-				</span>
-			</div>
-		</header>
+<svelte:head><title>Gallery</title></svelte:head>
 
-		{#if errorMessage}
-			<div
-				class="mb-6 flex items-center justify-between gap-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-				role="alert"
-			>
+<main class="min-h-screen bg-background px-4 py-5 text-foreground sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+	{#if errorMessage}
+		<div
+			class="mx-auto mb-5 max-w-[1800px] border border-destructive bg-background px-4 py-3 text-sm text-destructive shadow-sm"
+			role="alert"
+		>
+			<div class="flex items-center justify-between gap-4">
 				<p>{errorMessage}</p>
 				<button
 					type="button"
-					class="rounded p-1 transition-colors hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive"
 					onclick={() => (errorMessage = null)}
+					class="rounded-sm p-1 transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
 					aria-label="Dismiss error"
 				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" aria-hidden="true">
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						class="size-4"
+						aria-hidden="true"
+					>
 						<path d="m6 6 12 12M18 6 6 18" />
 					</svg>
 				</button>
 			</div>
-		{/if}
+		</div>
+	{/if}
 
-		{#if successMessage}
-			<div
-				class="mb-6 flex items-center justify-between gap-4 rounded-lg border border-success/30 bg-success/10 px-4 py-3 text-sm text-success"
-				role="status"
-			>
-				<p>{successMessage}</p>
+	{#if isLoading}
+		<div
+			class="mx-auto max-w-[1800px] columns-2 gap-4 sm:columns-3 sm:gap-5 lg:columns-4 xl:columns-5"
+			aria-label="Loading gallery"
+			aria-busy="true"
+		>
+			{#each Array(10) as _, index (index)}
+				<div
+					class={`mb-4 break-inside-avoid bg-muted animate-pulse sm:mb-5 ${
+						index % 3 === 0
+							? 'aspect-square'
+							: index % 3 === 1
+								? 'aspect-[3/4]'
+								: 'aspect-[4/3]'
+					}`}
+				></div>
+			{/each}
+		</div>
+	{:else if images.length === 0}
+		<section
+			class="flex min-h-[70vh] flex-col items-center justify-center px-6 text-center"
+			aria-labelledby="empty-gallery-title"
+		>
+			<h1 id="empty-gallery-title" class="text-lg font-medium">Your gallery is empty</h1>
+			<p class="mt-2 text-sm text-muted-foreground">
+				Upload an image to start your collection.
+			</p>
+		</section>
+	{:else}
+		<section
+			class="mx-auto max-w-[1800px] columns-2 gap-4 sm:columns-3 sm:gap-5 lg:columns-4 xl:columns-5"
+			aria-label="Image gallery"
+		>
+			{#each images as image (image.id)}
 				<button
 					type="button"
-					class="rounded p-1 transition-colors hover:bg-success/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-success"
-					onclick={() => (successMessage = null)}
-					aria-label="Dismiss notification"
+					onclick={() => openLightbox(image)}
+					class="group mb-4 block w-full break-inside-avoid overflow-hidden bg-muted text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:mb-5"
+					aria-label={`Open ${image.name}`}
 				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" aria-hidden="true">
-						<path d="m6 6 12 12M18 6 6 18" />
-					</svg>
+					<img
+						src={image.thumbUrl || image.url}
+						alt={image.name}
+						loading="lazy"
+						class="block h-auto w-full transition duration-300 ease-out group-hover:scale-[1.015] group-hover:brightness-105 group-focus-visible:scale-[1.015] group-focus-visible:brightness-105"
+					/>
 				</button>
-			</div>
-		{/if}
+			{/each}
+		</section>
+	{/if}
+</main>
 
-		<section class="mb-10" aria-labelledby="upload-heading">
-			<h2 id="upload-heading" class="sr-only">Upload an image</h2>
-			<div
-				class={`rounded-xl border-2 border-dashed p-6 transition-colors sm:p-8 ${
-					dragOver
-						? 'border-primary bg-primary/5'
-						: selectedFile
-							? 'border-border bg-card'
-							: 'border-border bg-card hover:border-primary/60'
-				}`}
-				ondragover={(event) => {
-					event.preventDefault();
-					dragOver = true;
-				}}
-				ondragleave={() => (dragOver = false)}
-				ondrop={onDrop}
-				role="region"
-				aria-label="File upload zone"
-			>
-				{#if !selectedFile}
+<button
+	type="button"
+	onclick={openUpload}
+	class="fixed right-5 bottom-5 z-30 flex size-14 items-center justify-center !rounded-full bg-primary text-primary-foreground shadow-lg transition duration-200 hover:scale-105 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary active:scale-95 sm:right-7 sm:bottom-7"
+	aria-label="Upload image"
+>
+	<svg
+		viewBox="0 0 24 24"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		class="size-6"
+		aria-hidden="true"
+	>
+		<path d="M12 5v14M5 12h14" />
+	</svg>
+</button>
+
+{#if showUpload}
+	<dialog
+		open
+		class="fixed inset-0 z-40 m-0 flex size-full max-h-none max-w-none items-center justify-center border-0 bg-foreground/70 p-4"
+		aria-modal="true"
+		aria-labelledby="upload-title"
+		onclick={(event) => event.target === event.currentTarget && closeUpload()}
+	>
+		<section class="w-full max-w-lg overflow-hidden bg-background shadow-xl">
+			<header class="border-b border-border px-5 py-4 sm:px-6">
+				<h1 id="upload-title" class="text-base font-medium">Upload image</h1>
+				<p class="mt-1 text-sm text-muted-foreground">
+					Choose an image from your device or drop it below.
+				</p>
+			</header>
+			<div class="p-5 sm:p-6">
+				{#if errorMessage}
+					<p class="mb-4 text-sm text-destructive" role="alert">{errorMessage}</p>
+				{/if}
+				<div
+					class={`border border-dashed p-4 transition sm:p-5 ${dragOver ? 'border-primary bg-muted' : 'border-border'}`}
+					ondragover={(event) => {
+						event.preventDefault();
+						dragOver = true;
+					}}
+					ondragleave={() => (dragOver = false)}
+					ondrop={onDrop}
+					role="region"
+					aria-label="Drop an image here"
+				>
 					<input
-						id="fileInput"
+						id="upload-image"
 						type="file"
 						accept="image/*"
 						class="sr-only"
 						onchange={onFileInputChange}
 					/>
-					<label for="fileInput" class="flex cursor-pointer flex-col items-center gap-3 text-center">
-						<div class="text-primary" aria-hidden="true">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="size-11">
-								<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-								<path d="m17 8-5-5-5 5M12 3v12" />
-							</svg>
-						</div>
-						<div>
-							<p class="font-medium">Choose an image or drag and drop</p>
-							<p class="mt-1 text-sm text-muted-foreground">
-								PNG, JPG, WEBP, GIF and SVG are processed with Bun.Image and stored in S3.
-							</p>
-						</div>
-						<span class="mt-1 rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium shadow-xs transition-colors hover:bg-muted">
-							Browse image
-						</span>
-					</label>
-				{:else}
-					<div class="flex flex-col items-center gap-6 text-left sm:flex-row sm:items-start">
-						<div class="flex size-40 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background">
-							<img src={previewDataUrl} alt="Preview" class="size-full object-contain" />
-						</div>
-						<div class="min-w-0 flex-1">
-							<label for="imageTitle" class="text-sm font-medium text-muted-foreground">Image title / name</label>
-							<input
-								id="imageTitle"
-								type="text"
-								bind:value={customName}
-								placeholder="Enter image name"
-								class="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-xs outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+					{#if selectedFile && previewDataUrl}
+						<div class="flex flex-col gap-5 sm:flex-row">
+							<img
+								src={previewDataUrl}
+								alt="Selected preview"
+								class="aspect-square w-full bg-muted object-contain sm:size-36"
 							/>
-							<div class="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-								<span class="rounded-md bg-muted px-2 py-1">{formatBytes(selectedFile.size)}</span>
-								<span class="rounded-md bg-muted px-2 py-1">{selectedFile.type || 'image'}</span>
-							</div>
-							<div class="mt-5 flex flex-wrap gap-3">
-								<button
-									type="button"
-									class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none disabled:opacity-50"
-									onclick={handleUpload}
-									disabled={isUploading}
-								>
-									{#if isUploading}
-										<span class="size-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"></span>
-										Processing with Bun.Image and uploading...
-									{:else}
-										<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" aria-hidden="true">
-											<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-											<path d="m17 8-5-5-5 5M12 3v12" />
-										</svg>
-										Upload to S3
-									{/if}
-								</button>
-								<button
-									type="button"
-									class="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium shadow-xs transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none disabled:opacity-50"
-									onclick={clearSelection}
-									disabled={isUploading}
-								>
-									Cancel
-								</button>
+							<div class="flex min-w-0 flex-1 flex-col justify-between gap-5">
+								<div>
+									<p class="truncate text-sm font-medium">{selectedFile.name}</p>
+									<p class="mt-1 text-sm text-muted-foreground">
+										{formatBytes(selectedFile.size)}
+									</p>
+								</div>
+								<div class="flex flex-wrap gap-2">
+									<button
+										type="button"
+										onclick={handleUpload}
+										disabled={isUploading}
+										class="bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
+									>
+										{isUploading ? 'Uploading…' : 'Upload'}
+									</button>
+									<button
+										type="button"
+										onclick={closeUpload}
+										disabled={isUploading}
+										class="border border-border px-4 py-2 text-sm transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
+									>
+										Cancel
+									</button>
+								</div>
 							</div>
 						</div>
+					{:else}
+						<label
+							for="upload-image"
+							class="flex min-h-52 cursor-pointer flex-col items-center justify-center px-4 text-center"
+						>
+							<svg
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.8"
+								class="size-8 text-muted-foreground"
+								aria-hidden="true"
+							>
+								<path d="M12 16V4m0 0L7 9m5-5 5 5M5 20h14" />
+							</svg>
+							<p class="mt-3 text-sm font-medium">Drop an image here or choose a file</p>
+							<p class="mt-1 text-sm text-muted-foreground">Image files only</p>
+						</label>
+					{/if}
+				</div>
+				{#if !selectedFile || !previewDataUrl}
+					<div class="mt-4 flex justify-end">
+						<button
+							type="button"
+							onclick={closeUpload}
+							class="border border-border px-4 py-2 text-sm transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+						>
+							Cancel
+						</button>
 					</div>
 				{/if}
 			</div>
 		</section>
+	</dialog>
+{/if}
 
-		<section aria-labelledby="gallery-heading">
-			<div class="mb-5 flex items-center justify-between gap-4">
-				<h2 id="gallery-heading" class="text-lg font-semibold">Stored images ({images.length})</h2>
-				{#if imagesQuery.loading}
-					<span class="inline-flex items-center gap-2 text-sm text-muted-foreground">
-						<span class="size-3 animate-spin rounded-full border-2 border-current/30 border-t-current"></span>
-						Syncing...
-					</span>
-				{/if}
-			</div>
-
-			{#if isLoading}
-				<div class="rounded-xl border border-border bg-card px-6 py-16 text-center text-muted-foreground">
-					<div class="mx-auto mb-4 size-8 animate-spin rounded-full border-2 border-border border-t-primary"></div>
-					<p>Loading images from PostgreSQL and S3...</p>
-				</div>
-			{:else if images.length === 0}
-				<div class="rounded-xl border border-border bg-card px-6 py-16 text-center">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="mx-auto size-10 text-muted-foreground" aria-hidden="true">
-						<path d="M3 7.5 5.5 4h13L21 7.5M4 8h16v11.5a.5.5 0 0 1-.5.5h-15a.5.5 0 0 1-.5-.5z" />
-						<path d="M9 12h6" />
-					</svg>
-					<h3 class="mt-4 font-medium">No images stored yet</h3>
-					<p class="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-						Upload your first image above to store it in S3 and save its metadata in PostgreSQL.
-					</p>
-				</div>
-			{:else}
-				<div class="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
-					{#each images as image (image.id)}
-						<article class="group overflow-hidden rounded-xl border border-border bg-card shadow-xs transition hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-sm">
-							<button
-								type="button"
-								class="relative block h-52 w-full overflow-hidden bg-muted text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
-								onclick={() => openModal(image)}
-								aria-label={`View full image: ${image.name}`}
-							>
-								<img src={image.thumbUrl || image.url} alt={image.name} loading="lazy" class="size-full object-cover transition duration-300 group-hover:scale-105" />
-								<span class="absolute inset-0 flex items-center justify-center bg-foreground/60 text-sm font-medium text-background opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-									View full image
-								</span>
-								{#if image.format}
-									<span class="absolute right-3 top-3 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs font-semibold tracking-wide text-primary backdrop-blur-sm">
-										{image.format.toUpperCase()}
-									</span>
-								{/if}
-							</button>
-							<div class="flex flex-1 flex-col gap-3 p-4">
-								<h3 class="truncate font-medium" title={image.name}>{image.name}</h3>
-								<div class="flex flex-wrap gap-2 text-xs text-muted-foreground">
-									{#if image.width && image.height}
-										<span class="rounded-md bg-muted px-2 py-1">{image.width} × {image.height}</span>
-									{/if}
-									<span class="rounded-md bg-muted px-2 py-1">{formatBytes(image.size)}</span>
-									<span class="rounded-md bg-muted px-2 py-1">{formatDate(image.createdAt)}</span>
-								</div>
-								<div class="mt-auto flex gap-2 border-t border-border pt-3">
-									<a
-										href={image.downloadUrl}
-										download={image.name}
-										class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-										title="Download image"
-									>
-										<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" aria-hidden="true">
-											<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-											<path d="m7 10 5 5 5-5M12 15V3" />
-										</svg>
-										Download
-									</a>
-									<button
-										type="button"
-										class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-destructive/30 px-3 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive disabled:pointer-events-none disabled:opacity-50"
-										onclick={() => handleDelete(image.id, image.name)}
-										disabled={deletingId === image.id}
-										title="Delete image"
-									>
-										{#if deletingId === image.id}
-											<span class="size-3 animate-spin rounded-full border-2 border-current/30 border-t-current"></span>
-										{:else}
-											<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" aria-hidden="true">
-												<path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" />
-											</svg>
-										{/if}
-										Delete
-									</button>
-								</div>
-							</div>
-						</article>
-					{/each}
-				</div>
-			{/if}
-		</section>
-	</div>
-</main>
-
-{#if activeModalImage}
+{#if activeImage}
 	<dialog
 		open
-		class="fixed inset-0 z-50 m-0 flex h-full max-h-none w-full max-w-none items-center justify-center bg-foreground/70 p-4 backdrop:bg-transparent"
+		class="fixed inset-0 z-40 m-0 flex size-full max-h-none max-w-none items-center justify-center border-0 bg-foreground/90 p-4 sm:p-6"
 		aria-modal="true"
-		aria-labelledby="lightbox-title"
-		onclick={(event) => {
-			if (event.target === event.currentTarget) closeModal();
-		}}
+		aria-label={`Preview ${activeImage.name}`}
+		onclick={onLightboxBackdropClick}
 	>
-		<div class="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
-			<div class="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-				<div class="min-w-0">
-					<h2 id="lightbox-title" class="truncate font-semibold">{activeModalImage.name}</h2>
-					<p class="mt-1 text-sm text-muted-foreground">
-						{activeModalImage.width
-							? `${activeModalImage.width} × ${activeModalImage.height} · `
-							: ''}{formatBytes(activeModalImage.size)} · {activeModalImage.contentType}
-					</p>
-				</div>
+		<div class="relative flex size-full items-center justify-center">
+			<img
+				src={activeImage.url}
+				alt={activeImage.name}
+				class="max-h-full max-w-full object-contain"
+			/>
+			<div class="absolute top-0 right-0 flex items-center gap-2 !rounded-full bg-background/95 p-1.5 text-foreground shadow-lg backdrop-blur">
 				<button
 					type="button"
-					class="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-					onclick={closeModal}
+					onclick={() => (showInfo = !showInfo)}
+					disabled={isDeleting}
+					class="flex size-9 items-center justify-center !rounded-full transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
+					aria-label={showInfo ? 'Hide image information' : 'Show image information'}
+					aria-pressed={showInfo}
+				>
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						class="size-5"
+						aria-hidden="true"
+					>
+						<circle cx="12" cy="12" r="9" />
+						<path d="M12 11v6M12 7h.01" />
+					</svg>
+				</button>
+				<button
+					type="button"
+					onclick={openDeleteConfirmation}
+					disabled={isDeleting}
+					class="flex size-9 items-center justify-center !rounded-full text-destructive transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
+					aria-label="Delete image"
+					aria-controls="delete-confirmation"
+				>
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						class="size-5"
+						aria-hidden="true"
+					>
+						<path d="M4 7h16M10 11v6M14 11v6M9 7l1-3h4l1 3M6 7l1 13h10l1-13" />
+					</svg>
+				</button>
+				<button
+					type="button"
+					onclick={closeLightbox}
+					disabled={isDeleting}
+					class="flex size-9 items-center justify-center !rounded-full transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
 					aria-label="Close image preview"
 				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5" aria-hidden="true">
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						class="size-5"
+						aria-hidden="true"
+					>
 						<path d="m6 6 12 12M18 6 6 18" />
 					</svg>
 				</button>
 			</div>
-			<div class="flex max-h-[65vh] items-center justify-center overflow-auto bg-background p-4">
-				<img src={activeModalImage.url} alt={activeModalImage.name} class="max-h-[60vh] max-w-full rounded-lg object-contain" />
-			</div>
-			<div class="flex flex-wrap justify-end gap-3 border-t border-border px-5 py-4">
-				<a
-					href={activeModalImage.downloadUrl}
-					download={activeModalImage.name}
-					class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+			{#if showInfo}
+				<aside
+					class="absolute right-0 bottom-0 w-full max-w-sm border border-border bg-background/95 p-5 text-sm text-foreground shadow-xl backdrop-blur sm:w-80"
+					aria-label="Image metadata"
 				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" aria-hidden="true">
-						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-						<path d="m7 10 5 5 5-5M12 15V3" />
-					</svg>
-					Download original
-				</a>
-				<button
-					type="button"
-					class="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium shadow-xs transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-					onclick={closeModal}
+					<p class="mb-4 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+						Image details
+					</p>
+					<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3">
+						<dt class="text-muted-foreground">Name</dt>
+						<dd class="truncate font-medium">{activeImage.name}</dd>
+						{#if activeImage.width && activeImage.height}
+							<dt class="text-muted-foreground">Dimensions</dt>
+							<dd>{activeImage.width} × {activeImage.height}</dd>
+						{/if}
+						<dt class="text-muted-foreground">Format</dt>
+						<dd>{activeImage.contentType}</dd>
+						<dt class="text-muted-foreground">Size</dt>
+						<dd>{formatBytes(activeImage.size)}</dd>
+						<dt class="text-muted-foreground">Added</dt>
+						<dd>{formatDate(activeImage.createdAt)}</dd>
+					</dl>
+				</aside>
+			{/if}
+			{#if showDeleteConfirmation}
+				<section
+					id="delete-confirmation"
+					class="absolute top-14 right-0 w-full max-w-sm border border-border bg-background p-5 text-foreground shadow-xl sm:w-80"
+					aria-labelledby="delete-title"
+					aria-describedby="delete-description"
 				>
-					Close
-				</button>
-			</div>
+					<h2 id="delete-title" class="text-sm font-medium">Delete image?</h2>
+					<p id="delete-description" class="mt-2 text-sm text-muted-foreground">
+						This permanently removes <span class="font-medium text-foreground">{activeImage.name}</span>.
+					</p>
+					{#if deleteError}
+						<p class="mt-3 text-sm text-destructive" role="alert">{deleteError}</p>
+					{/if}
+					<div class="mt-5 flex justify-end gap-2">
+						<button
+							type="button"
+							onclick={closeDeleteConfirmation}
+							disabled={isDeleting}
+							class="border border-border px-3 py-2 text-sm transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
+						>
+							Cancel
+						</button>
+						<button
+							type="button"
+							onclick={handleDelete}
+							disabled={isDeleting}
+							class="bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
+						>
+							{isDeleting ? 'Deleting…' : 'Delete'}
+						</button>
+					</div>
+				</section>
+			{/if}
 		</div>
 	</dialog>
 {/if}

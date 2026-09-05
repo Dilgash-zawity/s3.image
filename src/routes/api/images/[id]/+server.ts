@@ -1,8 +1,8 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '#lib/server/db';
-import { images } from '#lib/server/db/schema';
-import { s3 } from '#lib/server/s3';
+import { db } from '#server/db';
+import { images } from '#server/db/schema';
+import { s3 } from '#server/s3';
 import { eq } from 'drizzle-orm';
 
 export const GET: RequestHandler = async ({ params }) => {
