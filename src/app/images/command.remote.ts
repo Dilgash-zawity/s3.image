@@ -1,35 +1,11 @@
-import { command, query } from '$app/server';
-import * as v from 'valibot';
+import { command } from '$app/server';
 import { db } from '#server/db';
 import { images } from '#server/db/schema';
 import { s3 } from '#server/s3';
-import { desc, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
+import { V_DeleteImage, V_UploadImage } from './validation.js';
 
-export const getImages = query(async () => {
-	const allImages = await db.select().from(images).orderBy(desc(images.createdAt));
-
-	return allImages.map((img) => {
-		const viewUrl = s3.presign(img.s3Key, { expiresIn: 3600 });
-		const thumbUrl = img.thumbKey ? s3.presign(img.thumbKey, { expiresIn: 3600 }) : viewUrl;
-
-		return {
-			...img,
-			createdAt: img.createdAt.toISOString(),
-			url: viewUrl,
-			thumbUrl,
-			downloadUrl: `/api/images/${img.id}/download`,
-			rawUrl: `/api/images/${img.id}`
-		};
-	});
-});
-
-const UploadImageSchema = v.object({
-	name: v.pipe(v.string(), v.minLength(1, 'Image name is required')),
-	mimeType: v.pipe(v.string(), v.regex(/^image\//, 'Must be an image file')),
-	data: v.pipe(v.string(), v.minLength(1, 'Image data is required'))
-});
-
-export const uploadImage = command(UploadImageSchema, async ({ name, mimeType, data }) => {
+export const UPLOAD_IMAGE = command(V_UploadImage, async ({ name, mimeType, data }) => {
 	const base64Data = data.includes(';base64,') ? data.split(';base64,')[1] : data;
 	const buffer = Buffer.from(base64Data, 'base64');
 
@@ -92,11 +68,7 @@ export const uploadImage = command(UploadImageSchema, async ({ name, mimeType, d
 	};
 });
 
-const DeleteImageSchema = v.object({
-	id: v.pipe(v.number(), v.integer('ID must be an integer'))
-});
-
-export const deleteImage = command(DeleteImageSchema, async ({ id }) => {
+export const DELETE_IMAGE = command(V_DeleteImage, async ({ id }) => {
 	const [existing] = await db.select().from(images).where(eq(images.id, id));
 	if (!existing) {
 		throw new Error('Image not found');

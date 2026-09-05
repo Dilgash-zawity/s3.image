@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Services
-	import { deleteImage, getImages, uploadImage } from '#lib/images.remote';
+	import { DELETE_IMAGE, GET_IMAGES, UPLOAD_IMAGE } from '#app/images';
 
 	// Script
 	type ImageRecord = {
@@ -16,7 +16,7 @@
 		createdAt: string;
 	};
 
-	const imagesQuery = getImages();
+	const imagesQuery = GET_IMAGES();
 
 	let dragOver = $state(false);
 	let selectedFile = $state<File | null>(null);
@@ -105,11 +105,11 @@
 		successMessage = null;
 
 		try {
-			await uploadImage({
+			await UPLOAD_IMAGE({
 				name: customName.trim() || selectedFile.name,
 				mimeType: selectedFile.type,
 				data: previewDataUrl
-			}).updates(getImages);
+			}).updates(GET_IMAGES);
 
 			successMessage = `Successfully uploaded "${customName || selectedFile.name}"`;
 			clearSelection();
@@ -128,7 +128,7 @@
 		errorMessage = null;
 
 		try {
-			await deleteImage({ id }).updates(getImages);
+			await DELETE_IMAGE({ id }).updates(GET_IMAGES);
 			successMessage = `Deleted "${name}"`;
 			if (activeModalImage?.id === id) activeModalImage = null;
 			await imagesQuery.refresh();

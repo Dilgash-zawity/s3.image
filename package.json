@@ -35,6 +35,7 @@
 		"#lib": "./src/lib/index.js",
 		"#lib/*": "./src/lib/*",
 		"#app": "./src/app/index.js",
+		"#app/images": "./src/app/images/index.js",
 		"#app/*": "./src/app/*",
 		"#ui": "./src/ui/index.js",
 		"#ui/*": "./src/ui/*",
