@@ -1,8 +1,8 @@
 import { command, query } from '$app/server';
 import * as v from 'valibot';
-import { db } from '#lib/server/db';
-import { images } from '#lib/server/db/schema';
-import { s3 } from '#lib/server/s3';
+import { db } from '#server/db';
+import { images } from '#server/db/schema';
+import { s3 } from '#server/s3';
 import { desc, eq } from 'drizzle-orm';
 
 export const getImages = query(async () => {
