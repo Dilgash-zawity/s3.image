@@ -1,32 +1,20 @@
 {
-	"extends": "$app/tsconfig",
-	"compilerOptions": {
-		"rewriteRelativeImportExtensions": true,
-		"sourceMap": true,
-		"strict": true,
-		"types": [
-			"$app/types",
-			"@types/bun",
-			"@types/node",
-			"./worker-configuration.d.ts"
-		],
-		"paths": {
-			"#lib": [
-				"./src/lib/index.ts"
-			],
-			"#lib/*": [
-				"./src/lib/*"
-			],
-			"#server": [
-				"./src/server/index.ts"
-			],
-			"#server/*": [
-				"./src/server/*"
-			]
-		}
-	},
-	"include": [
-		"src",
-		"drizzle.config.ts"
-	]
+    "extends": "$app/tsconfig",
+    "compilerOptions": {
+        "rewriteRelativeImportExtensions": true,
+        "sourceMap": true,
+        "strict": true,
+        "types": [
+            "$app/types",
+            "@types/bun",
+            "@types/node",
+        ],
+        "paths": {
+            "#lib": ["./src/lib/index.ts"],
+            "#lib/*": ["./src/lib/*"],
+            "#server": ["./src/server/index.ts"],
+            "#server/*": ["./src/server/*"],
+        },
+    },
+    "include": ["src", "drizzle.config.ts"],
 }
