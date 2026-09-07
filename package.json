@@ -16,7 +16,6 @@
 		"db:studio": "drizzle-kit studio"
 	},
 	"devDependencies": {
-		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/kit": "next",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@tailwindcss/vite": "^4.3.0",
@@ -43,6 +42,7 @@
 		"#server/*": "./src/server/*"
 	},
 	"dependencies": {
+		"svelte-adapter-bun": "^1.0.1",
 		"valibot": "^1.4.2"
 	}
 }
