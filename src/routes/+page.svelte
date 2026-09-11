@@ -15,6 +15,8 @@
 		createdAt: string;
 	};
 
+	const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
+
 	const imagesQuery = GET_IMAGES();
 
 	let activeImage = $state<ImageRecord | null>(null);
@@ -36,19 +38,33 @@
 		if (bytes === 0) return '0 B';
 
 		const units = ['B', 'KB', 'MB', 'GB'];
-		const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+		const index = Math.min(
+			Math.floor(Math.log(bytes) / Math.log(1024)),
+			units.length - 1
+		);
+
 		const value = bytes / Math.pow(1024, index);
 
-		return `${Number(value.toFixed(value >= 10 || index === 0 ? 0 : 1))} ${units[index]}`;
+		return `${Number(
+			value.toFixed(value >= 10 || index === 0 ? 0 : 1)
+		)} ${units[index]}`;
 	}
 
 	function formatDate(dateString: string): string {
 		const date = new Date(dateString);
-		return Number.isNaN(date.getTime()) ? dateString : date.toLocaleString();
+
+		return Number.isNaN(date.getTime())
+			? dateString
+			: date.toLocaleString();
 	}
 
-	function getErrorMessage(error: unknown, fallback: string): string {
-		return error instanceof Error && error.message ? error.message : fallback;
+	function getErrorMessage(
+		error: unknown,
+		fallback: string
+	): string {
+		return error instanceof Error && error.message
+			? error.message
+			: fallback;
 	}
 
 	function clearSelection(): void {
@@ -70,8 +86,17 @@
 	}
 
 	function handleFileSelected(file: File): void {
+		// Only allow images
 		if (!file.type.startsWith('image/')) {
 			errorMessage = 'Choose an image file to upload.';
+			clearSelection();
+			return;
+		}
+
+		// Maximum file size: 10 MB
+		if (file.size > MAX_IMAGE_SIZE) {
+			errorMessage = 'Image must be smaller than 10 MB.';
+			clearSelection();
 			return;
 		}
 
@@ -79,31 +104,61 @@
 		selectedFile = file;
 
 		const reader = new FileReader();
+
 		reader.onload = () => {
-			previewDataUrl = typeof reader.result === 'string' ? reader.result : null;
+			previewDataUrl =
+				typeof reader.result === 'string'
+					? reader.result
+					: null;
 		};
+
 		reader.onerror = () => {
 			previewDataUrl = null;
-			errorMessage = 'Unable to read the selected image.';
+			errorMessage =
+				'Unable to read the selected image.';
 		};
+
 		reader.readAsDataURL(file);
 	}
 
 	function onFileInputChange(event: Event): void {
-		const [file] = (event.currentTarget as HTMLInputElement).files ?? [];
-		if (file) handleFileSelected(file);
+		const [file] =
+			(event.currentTarget as HTMLInputElement)
+				.files ?? [];
+
+		if (file) {
+			handleFileSelected(file);
+		}
 	}
 
 	function onDrop(event: DragEvent): void {
 		event.preventDefault();
+
 		dragOver = false;
 
-		const [file] = event.dataTransfer?.files ?? [];
-		if (file) handleFileSelected(file);
+		const [file] =
+			event.dataTransfer?.files ?? [];
+
+		if (file) {
+			handleFileSelected(file);
+		}
 	}
 
 	async function handleUpload(): Promise<void> {
-		if (!selectedFile || !previewDataUrl) return;
+		if (
+			!selectedFile ||
+			!previewDataUrl ||
+			isUploading
+		) {
+			return;
+		}
+
+		// Check again before upload
+		if (selectedFile.size > MAX_IMAGE_SIZE) {
+			errorMessage =
+				'Image must be smaller than 10 MB.';
+			return;
+		}
 
 		isUploading = true;
 		errorMessage = null;
@@ -116,10 +171,15 @@
 			}).updates(GET_IMAGES);
 
 			isUploading = false;
+
 			closeUpload();
+
 			await imagesQuery.refresh();
 		} catch (error: unknown) {
-			errorMessage = getErrorMessage(error, 'Upload failed. Please try again.');
+			errorMessage = getErrorMessage(
+				error,
+				'Upload failed. Please try again.'
+			);
 		} finally {
 			isUploading = false;
 		}
@@ -160,37 +220,56 @@
 		deleteError = null;
 
 		try {
-			await DELETE_IMAGE({ id: activeImage.id }).updates(GET_IMAGES);
+			await DELETE_IMAGE({
+				id: activeImage.id
+			}).updates(GET_IMAGES);
 
 			activeImage = null;
 			showDeleteConfirmation = false;
 			showInfo = false;
+
 			await imagesQuery.refresh();
 		} catch {
-			deleteError = 'Unable to delete this image. Please try again.';
+			deleteError =
+				'Unable to delete this image. Please try again.';
 		} finally {
 			isDeleting = false;
 		}
 	}
 
-	function onLightboxBackdropClick(event: MouseEvent): void {
-		if (event.target === event.currentTarget && !showDeleteConfirmation) closeLightbox();
+	function onLightboxBackdropClick(
+		event: MouseEvent
+	): void {
+		if (
+			event.target === event.currentTarget &&
+			!showDeleteConfirmation
+		) {
+			closeLightbox();
+		}
 	}
 
 	function onKeyDown(event: KeyboardEvent): void {
 		if (event.key !== 'Escape') return;
 
-		if (showDeleteConfirmation) closeDeleteConfirmation();
-		else if (activeImage) closeLightbox();
-		else if (showUpload) closeUpload();
+		if (showDeleteConfirmation) {
+			closeDeleteConfirmation();
+		} else if (activeImage) {
+			closeLightbox();
+		} else if (showUpload) {
+			closeUpload();
+		}
 	}
 </script>
 
 <svelte:window onkeydown={onKeyDown} />
 
-<svelte:head><title>Gallery</title></svelte:head>
+<svelte:head>
+	<title>Gallery</title>
+</svelte:head>
 
-<main class="min-h-screen bg-background px-4 py-5 text-foreground sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+<main
+	class="min-h-screen bg-background px-4 py-5 text-foreground sm:px-6 sm:py-6 lg:px-8 lg:py-8"
+>
 	{#if errorMessage}
 		<div
 			class="mx-auto mb-5 max-w-[1800px] border border-destructive bg-background px-4 py-3 text-sm text-destructive shadow-sm"
@@ -198,6 +277,7 @@
 		>
 			<div class="flex items-center justify-between gap-4">
 				<p>{errorMessage}</p>
+
 				<button
 					type="button"
 					onclick={() => (errorMessage = null)}
@@ -242,7 +322,13 @@
 			class="flex min-h-[70vh] flex-col items-center justify-center px-6 text-center"
 			aria-labelledby="empty-gallery-title"
 		>
-			<h1 id="empty-gallery-title" class="text-lg font-medium">Your gallery is empty</h1>
+			<h1
+				id="empty-gallery-title"
+				class="text-lg font-medium"
+			>
+				Your gallery is empty
+			</h1>
+
 			<p class="mt-2 text-sm text-muted-foreground">
 				Upload an image to start your collection.
 			</p>
@@ -295,21 +381,47 @@
 		class="fixed inset-0 z-40 m-0 flex size-full max-h-none max-w-none items-center justify-center border-0 bg-foreground/70 p-4"
 		aria-modal="true"
 		aria-labelledby="upload-title"
-		onclick={(event) => event.target === event.currentTarget && closeUpload()}
+		onclick={(event) =>
+			event.target === event.currentTarget &&
+			closeUpload()}
 	>
-		<section class="w-full max-w-lg overflow-hidden bg-background shadow-xl">
-			<header class="border-b border-border px-5 py-4 sm:px-6">
-				<h1 id="upload-title" class="text-base font-medium">Upload image</h1>
-				<p class="mt-1 text-sm text-muted-foreground">
-					Choose an image from your device or drop it below.
+		<section
+			class="w-full max-w-lg overflow-hidden bg-background shadow-xl"
+		>
+			<header
+				class="border-b border-border px-5 py-4 sm:px-6"
+			>
+				<h1
+					id="upload-title"
+					class="text-base font-medium"
+				>
+					Upload image
+				</h1>
+
+				<p
+					class="mt-1 text-sm text-muted-foreground"
+				>
+					Choose an image from your device or
+					drop it below. Maximum 10 MB.
 				</p>
 			</header>
+
 			<div class="p-5 sm:p-6">
 				{#if errorMessage}
-					<p class="mb-4 text-sm text-destructive" role="alert">{errorMessage}</p>
+					<p
+						class="mb-4 text-sm text-destructive"
+						role="alert"
+					>
+						{errorMessage}
+					</p>
 				{/if}
+
 				<div
-					class={`border border-dashed p-4 transition sm:p-5 ${dragOver ? 'border-primary bg-muted' : 'border-border'}`}
+					class={`border border-dashed p-4 transition sm:p-5 ${
+						dragOver
+							? 'border-primary bg-muted'
+							: 'border-border'
+					}`}
 					ondragover={(event) => {
 						event.preventDefault();
 						dragOver = true;
@@ -326,29 +438,50 @@
 						class="sr-only"
 						onchange={onFileInputChange}
 					/>
+
 					{#if selectedFile && previewDataUrl}
-						<div class="flex flex-col gap-5 sm:flex-row">
+						<div
+							class="flex flex-col gap-5 sm:flex-row"
+						>
 							<img
 								src={previewDataUrl}
 								alt="Selected preview"
 								class="aspect-square w-full bg-muted object-contain sm:size-36"
 							/>
-							<div class="flex min-w-0 flex-1 flex-col justify-between gap-5">
+
+							<div
+								class="flex min-w-0 flex-1 flex-col justify-between gap-5"
+							>
 								<div>
-									<p class="truncate text-sm font-medium">{selectedFile.name}</p>
-									<p class="mt-1 text-sm text-muted-foreground">
-										{formatBytes(selectedFile.size)}
+									<p
+										class="truncate text-sm font-medium"
+									>
+										{selectedFile.name}
+									</p>
+
+									<p
+										class="mt-1 text-sm text-muted-foreground"
+									>
+										{formatBytes(
+											selectedFile.size
+										)}
 									</p>
 								</div>
-								<div class="flex flex-wrap gap-2">
+
+								<div
+									class="flex flex-wrap gap-2"
+								>
 									<button
 										type="button"
 										onclick={handleUpload}
 										disabled={isUploading}
 										class="bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
 									>
-										{isUploading ? 'Uploading…' : 'Upload'}
+										{isUploading
+											? 'Uploading…'
+											: 'Upload'}
 									</button>
+
 									<button
 										type="button"
 										onclick={closeUpload}
@@ -373,13 +506,27 @@
 								class="size-8 text-muted-foreground"
 								aria-hidden="true"
 							>
-								<path d="M12 16V4m0 0L7 9m5-5 5 5M5 20h14" />
+								<path
+									d="M12 16V4m0 0L7 9m5-5 5 5M5 20h14"
+								/>
 							</svg>
-							<p class="mt-3 text-sm font-medium">Drop an image here or choose a file</p>
-							<p class="mt-1 text-sm text-muted-foreground">Image files only</p>
+
+							<p
+								class="mt-3 text-sm font-medium"
+							>
+								Drop an image here or choose a
+								file
+							</p>
+
+							<p
+								class="mt-1 text-sm text-muted-foreground"
+							>
+								Image files only · Max 10 MB
+							</p>
 						</label>
 					{/if}
 				</div>
+
 				{#if !selectedFile || !previewDataUrl}
 					<div class="mt-4 flex justify-end">
 						<button
@@ -404,19 +551,26 @@
 		aria-label={`Preview ${activeImage.name}`}
 		onclick={onLightboxBackdropClick}
 	>
-		<div class="relative flex size-full items-center justify-center">
+		<div
+			class="relative flex size-full items-center justify-center"
+		>
 			<img
 				src={activeImage.url}
 				alt={activeImage.name}
 				class="max-h-full max-w-full object-contain"
 			/>
-			<div class="absolute top-0 right-0 flex items-center gap-2 !rounded-full bg-background/95 p-1.5 text-foreground shadow-lg backdrop-blur">
+
+			<div
+				class="absolute top-0 right-0 flex items-center gap-2 !rounded-full bg-background/95 p-1.5 text-foreground shadow-lg backdrop-blur"
+			>
 				<button
 					type="button"
 					onclick={() => (showInfo = !showInfo)}
 					disabled={isDeleting}
 					class="flex size-9 items-center justify-center !rounded-full transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
-					aria-label={showInfo ? 'Hide image information' : 'Show image information'}
+					aria-label={showInfo
+						? 'Hide image information'
+						: 'Show image information'}
 					aria-pressed={showInfo}
 				>
 					<svg
@@ -427,10 +581,15 @@
 						class="size-5"
 						aria-hidden="true"
 					>
-						<circle cx="12" cy="12" r="9" />
+						<circle
+							cx="12"
+							cy="12"
+							r="9"
+						/>
 						<path d="M12 11v6M12 7h.01" />
 					</svg>
 				</button>
+
 				<button
 					type="button"
 					onclick={openDeleteConfirmation}
@@ -447,9 +606,12 @@
 						class="size-5"
 						aria-hidden="true"
 					>
-						<path d="M4 7h16M10 11v6M14 11v6M9 7l1-3h4l1 3M6 7l1 13h10l1-13" />
+						<path
+							d="M4 7h16M10 11v6M14 11v6M9 7l1-3h4l1 3M6 7l1 13h10l1-13"
+						/>
 					</svg>
 				</button>
+
 				<button
 					type="button"
 					onclick={closeLightbox}
@@ -465,34 +627,82 @@
 						class="size-5"
 						aria-hidden="true"
 					>
-						<path d="m6 6 12 12M18 6 6 18" />
+						<path
+							d="m6 6 12 12M18 6 6 18"
+						/>
 					</svg>
 				</button>
 			</div>
+
 			{#if showInfo}
 				<aside
 					class="absolute right-0 bottom-0 w-full max-w-sm border border-border bg-background/95 p-5 text-sm text-foreground shadow-xl backdrop-blur sm:w-80"
 					aria-label="Image metadata"
 				>
-					<p class="mb-4 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+					<p
+						class="mb-4 text-xs font-medium tracking-wide text-muted-foreground uppercase"
+					>
 						Image details
 					</p>
-					<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3">
-						<dt class="text-muted-foreground">Name</dt>
-						<dd class="truncate font-medium">{activeImage.name}</dd>
+
+					<dl
+						class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3"
+					>
+						<dt
+							class="text-muted-foreground"
+						>
+							Name
+						</dt>
+						<dd
+							class="truncate font-medium"
+						>
+							{activeImage.name}
+						</dd>
+
 						{#if activeImage.width && activeImage.height}
-							<dt class="text-muted-foreground">Dimensions</dt>
-							<dd>{activeImage.width} × {activeImage.height}</dd>
+							<dt
+								class="text-muted-foreground"
+							>
+								Dimensions
+							</dt>
+							<dd>
+								{activeImage.width} ×
+								{activeImage.height}
+							</dd>
 						{/if}
-						<dt class="text-muted-foreground">Format</dt>
-						<dd>{activeImage.contentType}</dd>
-						<dt class="text-muted-foreground">Size</dt>
-						<dd>{formatBytes(activeImage.size)}</dd>
-						<dt class="text-muted-foreground">Added</dt>
-						<dd>{formatDate(activeImage.createdAt)}</dd>
+
+						<dt
+							class="text-muted-foreground"
+						>
+							Format
+						</dt>
+						<dd>
+							{activeImage.contentType}
+						</dd>
+
+						<dt
+							class="text-muted-foreground"
+						>
+							Size
+						</dt>
+						<dd>
+							{formatBytes(activeImage.size)}
+						</dd>
+
+						<dt
+							class="text-muted-foreground"
+						>
+							Added
+						</dt>
+						<dd>
+							{formatDate(
+								activeImage.createdAt
+							)}
+						</dd>
 					</dl>
 				</aside>
 			{/if}
+
 			{#if showDeleteConfirmation}
 				<section
 					id="delete-confirmation"
@@ -500,14 +710,37 @@
 					aria-labelledby="delete-title"
 					aria-describedby="delete-description"
 				>
-					<h2 id="delete-title" class="text-sm font-medium">Delete image?</h2>
-					<p id="delete-description" class="mt-2 text-sm text-muted-foreground">
-						This permanently removes <span class="font-medium text-foreground">{activeImage.name}</span>.
+					<h2
+						id="delete-title"
+						class="text-sm font-medium"
+					>
+						Delete image?
+					</h2>
+
+					<p
+						id="delete-description"
+						class="mt-2 text-sm text-muted-foreground"
+					>
+						This permanently removes
+						<span
+							class="font-medium text-foreground"
+						>
+							{activeImage.name}
+						</span>.
 					</p>
+
 					{#if deleteError}
-						<p class="mt-3 text-sm text-destructive" role="alert">{deleteError}</p>
+						<p
+							class="mt-3 text-sm text-destructive"
+							role="alert"
+						>
+							{deleteError}
+						</p>
 					{/if}
-					<div class="mt-5 flex justify-end gap-2">
+
+					<div
+						class="mt-5 flex justify-end gap-2"
+					>
 						<button
 							type="button"
 							onclick={closeDeleteConfirmation}
@@ -516,13 +749,16 @@
 						>
 							Cancel
 						</button>
+
 						<button
 							type="button"
 							onclick={handleDelete}
 							disabled={isDeleting}
 							class="bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
 						>
-							{isDeleting ? 'Deleting…' : 'Delete'}
+							{isDeleting
+								? 'Deleting…'
+								: 'Delete'}
 						</button>
 					</div>
 				</section>

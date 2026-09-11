@@ -16,7 +16,7 @@ export const UPLOAD_IMAGE = command(
 
         const buffer = Buffer.from(base64Data, "base64");
 
-        // Protect against images larger than 10 MB
+        // Maximum original image size: 10 MB
         if (buffer.byteLength > MAX_IMAGE_SIZE) {
             throw new Error("Image must be smaller than 10 MB");
         }
@@ -26,7 +26,7 @@ export const UPLOAD_IMAGE = command(
         let format: string | null = null;
         let thumbKey: string | null = null;
 
-        // Extract metadata and generate thumbnail using Bun.Image
+        // Extract image metadata and generate thumbnail
         try {
             const img = new Bun.Image(buffer);
 
@@ -44,7 +44,7 @@ export const UPLOAD_IMAGE = command(
                 format = meta.format;
             }
 
-            // Generate thumbnail
+            // Generate thumbnail while keeping aspect ratio
             try {
                 const resized = await img.resize(400, 400, {
                     fit: "inside",
@@ -54,7 +54,8 @@ export const UPLOAD_IMAGE = command(
 
                 const thumbBuffer = await thumbImage.bytes();
 
-                thumbKey = `thumbnails/${Date.now()}-${crypto.randomUUID()}.webp`;
+                thumbKey =
+                    `thumbnails/${Date.now()}-${crypto.randomUUID()}.webp`;
 
                 await s3.write(thumbKey, thumbBuffer, {
                     type: "image/webp",
@@ -86,7 +87,7 @@ export const UPLOAD_IMAGE = command(
                 type: mimeType,
             });
         } catch (err) {
-            // Clean up thumbnail if original upload fails
+            // Remove thumbnail if original upload fails
             if (thumbKey) {
                 try {
                     await s3.delete(thumbKey);
@@ -98,7 +99,7 @@ export const UPLOAD_IMAGE = command(
             throw err;
         }
 
-        // Store database record
+        // Store image information in database
         try {
             const [record] = await db
                 .insert(images)
@@ -122,10 +123,12 @@ export const UPLOAD_IMAGE = command(
 
             return {
                 success: true,
+
                 image: {
                     ...record,
 
-                    createdAt: record.createdAt.toISOString(),
+                    createdAt:
+                        record.createdAt.toISOString(),
 
                     url: s3.presign(record.s3Key, {
                         expiresIn: 3600,
@@ -137,13 +140,15 @@ export const UPLOAD_IMAGE = command(
                           })
                         : undefined,
 
-                    downloadUrl: `/api/images/${record.id}/download`,
+                    downloadUrl:
+                        `/api/images/${record.id}/download`,
 
-                    rawUrl: `/api/images/${record.id}`,
+                    rawUrl:
+                        `/api/images/${record.id}`,
                 },
             };
         } catch (err) {
-            // Database failed, remove uploaded files
+            // Database failed, remove uploaded S3 files
             try {
                 await s3.delete(s3Key);
 
@@ -174,7 +179,7 @@ export const DELETE_IMAGE = command(
             throw new Error("Image not found");
         }
 
-        // Delete files from S3
+        // Delete original and thumbnail from S3
         try {
             await s3.delete(existing.s3Key);
 
